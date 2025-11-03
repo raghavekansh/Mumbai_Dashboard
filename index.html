@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sewer Network Dashboard - Mumbai</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e; color: #eee; }
+        #header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #header h1 { font-size: 28px; font-weight: 600; margin-bottom: 8px; }
+        #header p { opacity: 0.9; font-size: 14px; }
+        #container { display: flex; height: calc(100vh - 100px); }
+        #sidebar { width: 340px; background: #16213e; padding: 20px; overflow-y: auto; box-shadow: 2px 0 8px rgba(0,0,0,0.2); }
+        #map { flex: 1; position: relative; }
+        .info-card { background: #0f3460; border-radius: 12px; padding: 16px; margin-bottom: 16px; border-left: 4px solid #667eea; }
+        .info-card h3 { font-size: 16px; margin-bottom: 12px; color: #667eea; }
+        .stat { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .stat:last-child { border-bottom: none; }
+        .stat-label { color: #aaa; font-size: 14px; }
+        .stat-value { font-weight: 600; font-size: 14px; color: #fff; }
+        .layer-toggle { background: #0f3460; border-radius: 8px; padding: 12px; margin-bottom: 12px; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: all 0.2s; }
+        .layer-toggle:hover { background: #1a4d7a; transform: translateX(4px); }
+        .layer-toggle input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+        .layer-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; color: white; }
+        .layer-icon.pipeline { background: #e74c3c; }
+        .layer-icon.manhole { background: #3498db; }
+        .layer-info { flex: 1; }
+        .layer-name { font-weight: 500; font-size: 14px; }
+        .layer-count { font-size: 12px; color: #aaa; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); padding: 24px 48px; border-radius: 12px; z-index: 1000; display: none; }
+        #loading.active { display: block; }
+        .spinner { border: 3px solid #333; border-top: 3px solid #667eea; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 12px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .leaflet-popup-content-wrapper { background: #1a1a2e; color: #eee; border-radius: 8px; }
+        .leaflet-popup-content { margin: 16px; min-width: 200px; }
+        .popup-title { font-size: 18px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #667eea; color: #667eea; }
+        .popup-row { padding: 6px 0; display: flex; justify-content: space-between; gap: 12px; }
+        .popup-label { font-size: 12px; color: #aaa; }
+        .popup-value { font-size: 13px; font-weight: 500; text-align: right; }
+        .error-message { background: #e74c3c; color: white; padding: 12px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+        .success-message { background: #2ecc71; color: white; padding: 12px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+        .pipe-type-legend { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .pipe-type-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+        .pipe-color-box { width: 20px; height: 3px; border-radius: 2px; }
+        .depth-indicator { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 4px; }
+        .depth-shallow { background: #2ecc71; color: white; }
+        .depth-medium { background: #f39c12; color: white; }
+        .depth-deep { background: #e74c3c; color: white; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🚰 Sewer Network Dashboard - Mumbai</h1>
+        <p>Interactive visualization of drainage infrastructure | Catchment ID: 508</p>
+    </div>
+
+    <div id="container">
+        <div id="sidebar">
+            <div class="info-card">
+                <h3>📊 Network Statistics</h3>
+                <div class="stat">
+                    <span class="stat-label">Total Pipelines</span>
+                    <span class="stat-value" id="pipeline-count">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Total Manholes</span>
+                    <span class="stat-value" id="manhole-count">0</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Total Length</span>
+                    <span class="stat-value" id="total-length">0 m</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Avg. Depth</span>
+                    <span class="stat-value" id="avg-depth">0 m</span>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3>🎨 Layer Controls</h3>
+                <div id="error-container"></div>
+                
+                <div class="layer-toggle" id="pipeline-toggle">
+                    <input type="checkbox" id="pipeline-checkbox" checked>
+                    <div class="layer-icon pipeline">━</div>
+                    <div class="layer-info">
+                        <div class="layer-name">Pipelines</div>
+                        <div class="layer-count" id="pipeline-layer-count">0 segments</div>
+                    </div>
+                </div>
+
+                <div class="layer-toggle" id="manhole-toggle">
+                    <input type="checkbox" id="manhole-checkbox" checked>
+                    <div class="layer-icon manhole">●</div>
+                    <div class="layer-info">
+                        <div class="layer-name">Manholes</div>
+                        <div class="layer-count" id="manhole-layer-count">0 nodes</div>
+                    </div>
+                </div>
+
+                <div class="pipe-type-legend">
+                    <div style="font-size: 12px; color: #aaa; margin-bottom: 6px;">Pipe Types:</div>
+                    <div class="pipe-type-item">
+                        <div class="pipe-color-box" style="background: #e74c3c;"></div>
+                        <span>RECTANGLE</span>
+                    </div>
+                    <div class="pipe-type-item">
+                        <div class="pipe-color-box" style="background: #3498db;"></div>
+                        <span>OREC</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3>📏 Pipe Dimensions</h3>
+                <div class="stat">
+                    <span class="stat-label">Min Width</span>
+                    <span class="stat-value" id="min-width">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Max Width</span>
+                    <span class="stat-value" id="max-width">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Min Height</span>
+                    <span class="stat-value" id="min-height">-</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Max Height</span>
+                    <span class="stat-value" id="max-height">-</span>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3>ℹ️ Legend</h3>
+                <p style="font-size: 13px; line-height: 1.6; color: #ccc;">
+                    <strong>GL:</strong> Ground Level<br>
+                    <strong>IL:</strong> Invert Level<br>
+                    <strong>MUID:</strong> Manhole Unique ID<br>
+                    <strong>Depth:</strong> GL - IL difference
+                </p>
+            </div>
+        </div>
+
+        <div id="map">
+            <div id="loading">
+                <div class="spinner"></div>
+                <div style="text-align: center;">Loading network data...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script>
+        console.log('🚀 Dashboard initializing...');
+        
+        const map = L.map('map').setView([19.0215, 72.8725], 15);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        let pipelineLayer = L.layerGroup().addTo(map);
+        let manholeLayer = L.layerGroup().addTo(map);
+
+        let stats = {
+            pipelines: 0,
+            manholes: 0,
+            totalLength: 0,
+            totalDepth: 0,
+            minWidth: Infinity,
+            maxWidth: 0,
+            minHeight: Infinity,
+            maxHeight: 0
+        };
+
+        document.getElementById('loading').classList.add('active');
+
+        function showError(message) {
+            console.error('❌ Error:', message);
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = '⚠️ ' + message;
+            document.getElementById('error-container').appendChild(errorDiv);
+        }
+
+        function showSuccess(message) {
+            console.log('✅', message);
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-message';
+            successDiv.textContent = '✅ ' + message;
+            document.getElementById('error-container').appendChild(successDiv);
+            setTimeout(() => successDiv.remove(), 3000);
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        function updateStats() {
+            document.getElementById('pipeline-count').textContent = stats.pipelines;
+            document.getElementById('manhole-count').textContent = stats.manholes;
+            document.getElementById('total-length').textContent = stats.totalLength.toFixed(2) + ' m';
+            const avgDepth = stats.manholes > 0 ? stats.totalDepth / stats.manholes : 0;
+            document.getElementById('avg-depth').textContent = avgDepth.toFixed(2) + ' m';
+            document.getElementById('pipeline-layer-count').textContent = stats.pipelines + ' segments';
+            document.getElementById('manhole-layer-count').textContent = stats.manholes + ' nodes';
+            document.getElementById('min-width').textContent = stats.minWidth === Infinity ? '-' : stats.minWidth + ' mm';
+            document.getElementById('max-width').textContent = stats.maxWidth === 0 ? '-' : stats.maxWidth + ' mm';
+            document.getElementById('min-height').textContent = stats.minHeight === Infinity ? '-' : stats.minHeight + ' mm';
+            document.getElementById('max-height').textContent = stats.maxHeight === 0 ? '-' : stats.maxHeight + ' mm';
+        }
+
+        let loadedFiles = 0;
+        function checkLoadingComplete() {
+            loadedFiles++;
+            if (loadedFiles >= 2) {
+                document.getElementById('loading').classList.remove('active');
+                console.log('✅ All data loaded successfully!');
+            }
+        }
+
+        console.log('📡 Fetching pipelines.geojson...');
+        fetch('data/pipelines.geojson')
+            .then(response => {
+                console.log('Pipeline response:', response.status, response.statusText);
+                if (!response.ok) throw new Error('pipelines.geojson not found. Make sure the file is in the data/ folder!');
+                return response.json();
+            })
+            .then(data => {
+                console.log('✅ Pipelines loaded:', data.features.length, 'segments');
+                stats.pipelines = data.features.length;
+                showSuccess('Loaded ' + data.features.length + ' pipelines');
+                
+                L.geoJSON(data, {
+                    style: feature => ({
+                        color: feature.properties['Pipe Type'] === 'RECTANGLE' ? '#e74c3c' : '#3498db',
+                        weight: 4,
+                        opacity: 0.8
+                    }),
+                    onEachFeature: (feature, layer) => {
+                        if (feature.geometry.type === 'LineString') {
+                            const coords = feature.geometry.coordinates;
+                            let length = 0;
+                            for (let i = 0; i < coords.length - 1; i++) {
+                                length += calculateDistance(coords[i][1], coords[i][0], coords[i + 1][1], coords[i + 1][0]);
+                            }
+                            stats.totalLength += length;
+                        }
+                        const width = feature.properties['Width(mm)'];
+                        const height = feature.properties['Height(mm)'];
+                        if (width) {
+                            stats.minWidth = Math.min(stats.minWidth, width);
+                            stats.maxWidth = Math.max(stats.maxWidth, width);
+                        }
+                        if (height) {
+                            stats.minHeight = Math.min(stats.minHeight, height);
+                            stats.maxHeight = Math.max(stats.maxHeight, height);
+                        }
+                        const props = feature.properties;
+                        let popupContent = `<div class="popup-title">🔧 Pipeline #${props.id}</div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Type</span><span class="popup-value">${props['Pipe Type'] || 'N/A'}</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Width</span><span class="popup-value">${props['Width(mm)']} mm</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Height</span><span class="popup-value">${props['Height(mm)']} mm</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">From Node</span><span class="popup-value">${props.From_node}</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">To Node</span><span class="popup-value">${props.to_node}</span></div>`;
+                        layer.bindPopup(popupContent);
+                    }
+                }).addTo(pipelineLayer);
+                updateStats();
+                checkLoadingComplete();
+            })
+            .catch(error => {
+                showError('Pipelines: ' + error.message);
+                checkLoadingComplete();
+            });
+
+        console.log('📡 Fetching manholes.geojson...');
+        fetch('data/manholes.geojson')
+            .then(response => {
+                console.log('Manhole response:', response.status, response.statusText);
+                if (!response.ok) throw new Error('manholes.geojson not found. Make sure the file is in the data/ folder!');
+                return response.json();
+            })
+            .then(data => {
+                console.log('✅ Manholes loaded:', data.features.length, 'nodes');
+                stats.manholes = data.features.length;
+                showSuccess('Loaded ' + data.features.length + ' manholes');
+
+                L.geoJSON(data, {
+                    pointToLayer: (feature, latlng) => {
+                        const color = feature.properties.type === 3 ? '#f39c12' : '#3498db';
+                        return L.circleMarker(latlng, {
+                            radius: 7,
+                            fillColor: color,
+                            color: '#fff',
+                            weight: 2,
+                            opacity: 1,
+                            fillOpacity: 0.85
+                        });
+                    },
+                    onEachFeature: (feature, layer) => {
+                        const props = feature.properties;
+                        const gl = props['U/S GL (m)'];
+                        const il = props['U/S IL (m)'];
+                        const depth = gl - il;
+                        stats.totalDepth += depth;
+                        let depthClass = 'depth-shallow';
+                        if (depth > 2.5) depthClass = 'depth-medium';
+                        if (depth > 3) depthClass = 'depth-deep';
+                        let popupContent = `<div class="popup-title">⚪ Manhole ${props.MUID}</div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">ID</span><span class="popup-value">${props.id}</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Type</span><span class="popup-value">${props.type}</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Ground Level</span><span class="popup-value">${gl.toFixed(2)} m</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Invert Level</span><span class="popup-value">${il.toFixed(2)} m</span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Depth</span><span class="popup-value">${depth.toFixed(2)} m <span class="${depthClass}">${depthClass.split('-')[1]}</span></span></div>`;
+                        popupContent += `<div class="popup-row"><span class="popup-label">Catchment</span><span class="popup-value">${props.c_ID}</span></div>`;
+                        layer.bindPopup(popupContent);
+                    }
+                }).addTo(manholeLayer);
+
+                updateStats();
+                
+                const allLayers = [];
+                pipelineLayer.eachLayer(l => allLayers.push(l));
+                manholeLayer.eachLayer(l => allLayers.push(l));
+                
+                if (allLayers.length > 0) {
+                    const group = L.featureGroup(allLayers);
+                    map.fitBounds(group.getBounds(), { padding: [50, 50] });
+                    console.log('🗺️ Map zoomed to fit all features');
+                }
+
+                checkLoadingComplete();
+            })
+            .catch(error => {
+                showError('Manholes: ' + error.message);
+                checkLoadingComplete();
+            });
+
+        document.getElementById('pipeline-checkbox').addEventListener('change', e => {
+            if (e.target.checked) {
+                map.addLayer(pipelineLayer);
+            } else {
+                map.removeLayer(pipelineLayer);
+            }
+        });
+
+        document.getElementById('manhole-checkbox').addEventListener('change', e => {
+            if (e.target.checked) {
+                map.addLayer(manholeLayer);
+            } else {
+                map.removeLayer(manholeLayer);
+            }
+        });
+    </script>
+</body>
+</html>
